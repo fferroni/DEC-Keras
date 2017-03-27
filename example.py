@@ -1,6 +1,6 @@
-from Keras_dec import DeepEmbeddingClustering
+from keras_dec import DeepEmbeddingClustering
 from keras.datasets import mnist
-
+import numpy as np
 
 def preproc(X):
     # 1/d * ||x_i||2**2 = 1.0
@@ -14,5 +14,5 @@ X_train = preproc(X_train)
 X_test = preproc(X_test)
 
 c = DeepEmbeddingClustering(n_clusters=10, input_dim=784)
-c.initialize(X_train, nb_epoch=100)
-c.cluster(X_train, y=y_train)
+c.initialize(X_train, epochs=60)
+c.cluster(X_train, y=y_train, iter_max = 20000)

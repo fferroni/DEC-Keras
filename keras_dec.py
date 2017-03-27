@@ -16,8 +16,7 @@ from sklearn.utils.linear_assignment_ import linear_assignment
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 import cPickle as pickle
-from DEC import ClusteringLayer
-
+import numpy as np
 
 class ClusteringLayer(Layer):
     '''
@@ -61,9 +60,9 @@ class ClusteringLayer(Layer):
         self.trainable_weights = [self.W]
 
     def call(self, x, mask=None):
-        q = 1.0/(1.0 + K.sqrt((K.square(K.expand_dims(x, dim=1) - self.W).sum(axis=2)))**2 /self.alpha)
+        q = 1.0/(1.0 + K.sqrt(K.sum(K.square(K.expand_dims(x, 1) - self.W), axis=2))**2 /self.alpha)
         q = q**((self.alpha+1.0)/2.0)
-        q = (q.T/q.sum(axis=1)).T
+        q = K.transpose(K.transpose(q)/K.sum(q, axis=1))
         return q
 
     def get_output_shape_for(self, input_shape):
