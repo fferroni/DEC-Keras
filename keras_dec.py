@@ -253,7 +253,7 @@ class DeepEmbeddingClustering(object):
                 clust_2d = pca.transform(self.cluster_centres)
                 # save states for visualization
                 pickle.dump({'z_2d': z_2d, 'clust_2d': clust_2d, 'q': self.q, 'p': self.p},
-                            open('c'+str(iteration)+'.pkl', 'w'))
+                            open('c'+str(iteration)+'.pkl', 'wb'))
                 # save DEC model checkpoints
                 self.DEC.save('DEC_model_'+str(iteration)+'.h5')
 
