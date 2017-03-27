@@ -196,7 +196,7 @@ class DeepEmbeddingClustering(object):
         assert save_interval >= update_interval
 
         train = True
-        shuffled = np.random.shuffle(range(X.shape[0]))
+        shuffled = np.random.shuffle(np.ndarray(range(X.shape[0])))
         iteration, index = 0, 0
         self.accuracy = []
 
