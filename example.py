@@ -14,5 +14,5 @@ X_train = preproc(X_train)
 X_test = preproc(X_test)
 
 c = DeepEmbeddingClustering(n_clusters=10, input_dim=784)
-c.initialize(X_train, epochs=60)
-c.cluster(X_train, y=y_train, iter_max = 20000)
+c.initialize(X_train, epochs=100)
+c.cluster(X_train, y=y_train)
