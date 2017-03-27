@@ -15,7 +15,10 @@ from sklearn.preprocessing import normalize
 from sklearn.utils.linear_assignment_ import linear_assignment
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
-import cPickle as pickle
+if (sys.version[0] == 2):
+    import cPickle as pickle
+else:
+    import pickle
 import numpy as np
 
 class ClusteringLayer(Layer):
