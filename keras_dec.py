@@ -72,6 +72,10 @@ class ClusteringLayer(Layer):
         assert input_shape and len(input_shape) == 2
         return (input_shape[0], self.output_dim)
 
+    def compute_output_shape(self, input_shape):
+        assert input_shape and len(input_shape) == 2
+        return (input_shape[0], self.output_dim)
+
     def get_config(self):
         config = {'output_dim': self.output_dim,
                   'input_dim': self.input_dim}
@@ -113,7 +117,7 @@ class DeepEmbeddingClustering(object):
             self.encoded = Dense(2000, activation='relu', name='encoder_dense_3')(self.encoded)
             self.encoded = Dropout(dropout_fraction, name='encoder_dropout_3')(self.encoded)
             self.encoded = Dense(10, activation='linear', name='encoder_dense_4')(self.encoded)
-        self.encoder = Model(input=self.input_layer, output=self.encoded)
+        self.encoder = Model(inputs=self.input_layer, outputs=self.encoded)
 
         if self.decoded is None:
             self.decoded = Dense(2000, activation='relu', name='decoder_dense_1')(self.encoded)
@@ -123,7 +127,7 @@ class DeepEmbeddingClustering(object):
             self.decoded = Dense(500, activation='relu', name='decoder_dense_3')(self.decoded)
             self.decoded = Dropout(dropout_fraction, name='decoder_dropout_3')(self.decoded)
             self.decoded = Dense(784, activation='linear', name='decoder_dense_4')(self.decoded)
-        self.autoencoder = Model(input=self.input_layer, output=self.decoded)
+        self.autoencoder = Model(inputs=self.input_layer, outputs=self.decoded)
 
         if cluster_centres is not None:
             assert cluster_centres.shape[0] == self.n_clusters
@@ -161,8 +165,8 @@ class DeepEmbeddingClustering(object):
             self.cluster_centres = kmeans.cluster_centers_
 
         # prepare DEC model
-        self.DEC = Model(input=self.input_layer,
-                         output=ClusteringLayer(self.n_clusters,
+        self.DEC = Model(inputs=self.input_layer,
+                         outputs=ClusteringLayer(self.n_clusters,
                                                 weights=self.cluster_centres,
                                                 name='clustering')(self.encoded))
         self.DEC.compile(loss='kullback_leibler_divergence', optimizer='adadelta')
