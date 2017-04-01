@@ -183,7 +183,6 @@ class DeepEmbeddingClustering(object):
             def step_decay(epoch):
                 initial_rate = self.learning_rate
                 factor = int(epoch / lr_epoch_update)
-                print("epoch %d, factor %d"%(epoch, factor))
                 lr = initial_rate / (10 ** factor)
                 print("Setting LR to %s"%lr)
                 return lr
@@ -205,8 +204,8 @@ class DeepEmbeddingClustering(object):
                 self.autoencoder.layers[len(self.autoencoder.layers) - i - 1].set_weights(autoencoder.layers[-1].get_weights())
             
             print('Finetuning autoencoder')
+            
             #update encoder and decoder weights:
-
             self.autoencoder.fit(X, X, batch_size=self.batch_size, epochs=finetune_epochs, callbacks=[lr_schedule])
 
             if save_autoencoder:

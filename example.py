@@ -2,9 +2,6 @@ from keras_dec import DeepEmbeddingClustering
 from keras.datasets import mnist
 import numpy as np
 
-def preproc(X):
-    # 1/d * ||x_i||2**2 = 1.0
-    return (X.T / X.mean(1)).T
 
 def get_mnist():
     np.random.seed(1234) # set seed for deterministic ordering
@@ -18,12 +15,6 @@ def get_mnist():
     Y = Y[p]
     return X, Y
 
-
-#X_train = np.asarray([x.flatten() for x in X_train], dtype='float32')
-#X_test = np.asarray([x.flatten() for x in X_test], dtype='float32')
-
-#X_train = preproc(X_train)
-#X_test = preproc(X_test)
 
 X, Y  = get_mnist()
 
