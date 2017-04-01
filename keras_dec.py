@@ -11,7 +11,9 @@ from keras.initializers import RandomNormal
 from keras.engine.topology import Layer, InputSpec
 from keras.models import Model, Sequential
 from keras.layers import Dense, Dropout, Input
+from keras.optimizers import SGD
 from sklearn.preprocessing import normalize
+from keras.callbacks import LearningRateScheduler
 from sklearn.utils.linear_assignment_ import linear_assignment
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
@@ -106,50 +108,23 @@ class DeepEmbeddingClustering(object):
         self.cluster_centres = cluster_centres
         self.batch_size = batch_size
 
-        #TODO: add stacked autoencoder: https://www.snip2code.com/Snippet/913210/Stacked-Denoising-Autoencoder-using-MNIS
-
-        """
-        for i, (n_in, n_out) in enumerate(
-            zip(nb_hidden_layers[:-1], nb_hidden_layers[1:]), start=1):
-        print('Training the layer {}: Input {} -> Output {}'.format(
-            i, n_in, n_out))
-
-        ae = Sequential()
-        encoder = containers.Sequential([
-            GaussianNoise(nb_noise[i - 1], input_shape=(n_in,)),
-            Dense(input_dim=n_in, output_dim=n_out, activation='sigmoid')
-        ])
-        decoder = containers.Sequential([
-            Dense(input_dim=n_out, output_dim=n_in, activation='sigmoid')
-        ])
-
-        ae.add(AutoEncoder(
-            encoder=encoder, decoder=decoder,
-            output_reconstruction=False,
-        ))
-
-        ae.compile(loss='mean_squared_error', optimizer=rms)
-        ae.fit(X_train_tmp, X_train_tmp,
-            batch_size=batch_size, nb_epoch=nb_epoch)
-
-        encoders.append(ae.layers[0].encoder)
-        X_train_tmp = ae.predict(X_train_tmp)
-        """
+        self.learning_rate = 0.1
+        self.iters_lr_update = 20000
+        self.lr_change_rate = 0.1
 
         # greedy layer-wise training before end-to-end training:
-        encoders = []
-        decoders = []
+
         self.encoders_dims = [self.input_dim, 500, 500, 2000, 10]
 
         self.input_layer = Input(shape=(self.input_dim,), name='input')
         dropout_fraction = 0.2
         init_stddev = 0.01
-        initial_lr = 0.1
+
         self.layer_wise_autoencoders = []
         self.encoders = []
         self.decoders = []
         for i  in range(1, len(self.encoders_dims)):
-            #input_layer = Input(shape=(encoders_dims[i-1],), name="input_%d"%i, input_shape=)
+            
             encoder_activation = 'linear' if i == (len(self.encoders_dims) - 1) else 'relu'
             encoder = Dense(self.encoders_dims[i], activation=encoder_activation,
                             input_shape=(self.encoders_dims[i-1],),
@@ -172,50 +147,20 @@ class DeepEmbeddingClustering(object):
                 Dropout(dropout_fraction, name='decoder_dropout_%d'%decoder_index),
                 decoder
             ])
-            autoencoder.compile(optimizer='adam', loss='mse', lr=initial_lr)
+            autoencoder.compile(loss='mse', optimizer=SGD(lr=self.learning_rate, decay=0, momentum=0.9))
             self.layer_wise_autoencoders.append(autoencoder)
 
         # build the end-to-end autoencoder for finetuning
         # Note that at this point dropout is discarded
         self.encoder = Sequential(self.encoders)
-        self.encoder.compile(optimizer='adam', loss='mse', lr=initial_lr)
+        self.encoder.compile(loss='mse', optimizer=SGD(lr=self.learning_rate, decay=0, momentum=0.9))
         self.decoders.reverse()
         self.autoencoder = Sequential(self.encoders + self.decoders)
-        self.autoencoder.compile(optimizer='adam', loss='mse', lr=initial_lr)
-
-        '''
-
-        if self.encoded is None:
-            self.encoded = Dropout(dropout_fraction, name='input_dropout')(self.input_layer)
-            self.encoded = Dense(500, activation='relu', name='encoder_dense_1')(self.encoded)
-            self.encoded = Dropout(dropout_fraction, name='encoder_dropout_1')(self.encoded)
-            self.encoded = Dense(500, activation='relu', name='encoder_dense_2')(self.encoded)
-            self.encoded = Dropout(dropout_fraction, name='encoder_dropout_2')(self.encoded)
-            self.encoded = Dense(2000, activation='relu', name='encoder_dense_3')(self.encoded)
-            self.encoded = Dropout(dropout_fraction, name='encoder_dropout_3')(self.encoded)
-            self.encoded = Dense(10, activation='linear', name='encoder_dense_4')(self.encoded)
-        self.encoder = Model(inputs=self.input_layer, outputs=self.encoded)
-
-        if self.decoded is None:
-            self.decoded = Dense(2000, activation='relu', name='decoder_dense_1')(self.encoded)
-            self.decoded = Dropout(dropout_fraction, name='decoder_dropout_1')(self.decoded)
-            self.decoded = Dense(500, activation='relu', name='decoder_dense_2')(self.decoded)
-            self.decoded = Dropout(dropout_fraction, name='decoder_dropout_2')(self.decoded)
-            self.decoded = Dense(500, activation='relu', name='decoder_dense_3')(self.decoded)
-            self.decoded = Dropout(dropout_fraction, name='decoder_dropout_3')(self.decoded)
-            self.decoded = Dense(784, activation='linear', name='decoder_dense_4')(self.decoded)
-        self.autoencoder = Model(inputs=self.input_layer, outputs=self.decoded)
-        '''
+        self.autoencoder.compile(loss='mse', optimizer=SGD(lr=self.learning_rate, decay=0, momentum=0.9))
 
         if cluster_centres is not None:
             assert cluster_centres.shape[0] == self.n_clusters
             assert cluster_centres.shape[1] == self.encoder.layers[-1].output_dim
-
-#        for autoencoder in self.layer_wise_autoencoders:
-#            autoencoder.compile(optimizer='adam', loss='mse')
-
-#        self.encoder.compile(optimizer='adam', loss='mse')
-#        self.autoencoder.compile(optimizer='adam', loss='mse')
 
         if self.pretrained_weights is not None:
             self.autoencoder.load_weights(self.pretrained_weights)
@@ -226,14 +171,24 @@ class DeepEmbeddingClustering(object):
 
     def initialize(self, X, save_autoencoder=False, layerwise_pretrain_iters=50000, finetune_iters=100000):
         if self.pretrained_weights is None:
-            # TODO: Initialize layer weights to Gaussian with mean 0 and STD of 0.01
+
             iters_per_epoch = int(len(X) / self.batch_size)
             layerwise_epochs = max(int(layerwise_pretrain_iters / iters_per_epoch), 1)
             finetune_epochs = max(int(finetune_iters / iters_per_epoch), 1)
 
-            # TODO: Set starting learning rate to 0.1 and divide by 10 every 20000 iterations
             print('layerwise pretrain')
             current_input = X
+            lr_epoch_update = max(1, self.iters_lr_update / float(iters_per_epoch))
+            
+            def step_decay(epoch):
+                initial_rate = self.learning_rate
+                factor = int(epoch / lr_epoch_update)
+                print("epoch %d, factor %d"%(epoch, factor))
+                lr = initial_rate / (10 ** factor)
+                print("Setting LR to %s"%lr)
+                return lr
+            lr_schedule = LearningRateScheduler(step_decay)
+
             for i, autoencoder in enumerate(self.layer_wise_autoencoders):
                 if i > 0:
                     weights = self.encoders[i-1].get_weights()
@@ -241,18 +196,18 @@ class DeepEmbeddingClustering(object):
                                         activation='relu', weights=weights,
                                         name='encoder_dense_copy_%d'%i)
                     encoder_model = Sequential([dense_layer])
-                    encoder_model.compile(optimizer='adam', loss='mse', lr=0.01)
+                    encoder_model.compile(loss='mse', optimizer=SGD(lr=self.learning_rate, decay=0, momentum=0.9))
                     current_input = encoder_model.predict(current_input)
 
                 autoencoder.fit(current_input, current_input, 
-                                batch_size=self.batch_size, epochs=layerwise_epochs)
+                                batch_size=self.batch_size, epochs=layerwise_epochs, callbacks=[lr_schedule])
                 self.autoencoder.layers[i].set_weights(autoencoder.layers[1].get_weights())
                 self.autoencoder.layers[len(self.autoencoder.layers) - i - 1].set_weights(autoencoder.layers[-1].get_weights())
             
             print('Finetuning autoencoder')
             #update encoder and decoder weights:
 
-            self.autoencoder.fit(X, X, batch_size=self.batch_size, epochs=finetune_epochs)
+            self.autoencoder.fit(X, X, batch_size=self.batch_size, epochs=finetune_epochs, callbacks=[lr_schedule])
 
             if save_autoencoder:
                 self.autoencoder.save_weights('autoencoder.h5')
@@ -344,7 +299,6 @@ class DeepEmbeddingClustering(object):
                 else:
                     self.y_pred = y_pred
 
-#Is this needed?
                 for i in range(len(self.encoder.layers)):
                     self.encoder.layers[i].set_weights(self.DEC.layers[0].layers[i].get_weights())
                 self.cluster_centres = self.DEC.layers[-1].get_weights()[0]

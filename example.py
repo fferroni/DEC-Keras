@@ -28,5 +28,5 @@ def get_mnist():
 X, Y  = get_mnist()
 
 c = DeepEmbeddingClustering(n_clusters=10, input_dim=784)
-c.initialize(X, finetune_iters=100000, layerwise_pretrain_iters=500000)
+c.initialize(X, finetune_iters=100000, layerwise_pretrain_iters=50000)
 c.cluster(X, y=Y)
