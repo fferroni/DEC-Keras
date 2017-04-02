@@ -184,7 +184,6 @@ class DeepEmbeddingClustering(object):
                 initial_rate = self.learning_rate
                 factor = int(epoch / lr_epoch_update)
                 lr = initial_rate / (10 ** factor)
-                print("Setting LR to %s"%lr)
                 return lr
             lr_schedule = LearningRateScheduler(step_decay)
 
@@ -274,7 +273,7 @@ class DeepEmbeddingClustering(object):
             # cutoff iteration
             if iter_max < iteration:
                 print('Reached maximum iteration limit. Stopping training.')
-                return
+                return self.y_pred
 
             # update (or initialize) probability distributions and propagate weight changes
             # from DEC model to encoder.
