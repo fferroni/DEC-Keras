@@ -7,17 +7,21 @@ Definition can accept somewhat custom neural networks. Defaults are from paper.
 import sys
 import numpy as np
 import keras.backend as K
-import keras.backend as K
+from keras.initializers import RandomNormal
 from keras.engine.topology import Layer, InputSpec
 from keras.models import Model, Sequential
 from keras.layers import Dense, Dropout, Input
+from keras.optimizers import SGD
 from sklearn.preprocessing import normalize
+from keras.callbacks import LearningRateScheduler
 from sklearn.utils.linear_assignment_ import linear_assignment
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
-import cPickle as pickle
-from DEC import ClusteringLayer
-
+if (sys.version[0] == 2):
+    import cPickle as pickle
+else:
+    import pickle
+import numpy as np
 
 class ClusteringLayer(Layer):
     '''
@@ -61,12 +65,16 @@ class ClusteringLayer(Layer):
         self.trainable_weights = [self.W]
 
     def call(self, x, mask=None):
-        q = 1.0/(1.0 + K.sqrt((K.square(K.expand_dims(x, dim=1) - self.W).sum(axis=2)))**2 /self.alpha)
+        q = 1.0/(1.0 + K.sqrt(K.sum(K.square(K.expand_dims(x, 1) - self.W), axis=2))**2 /self.alpha)
         q = q**((self.alpha+1.0)/2.0)
-        q = (q.T/q.sum(axis=1)).T
+        q = K.transpose(K.transpose(q)/K.sum(q, axis=1))
         return q
 
     def get_output_shape_for(self, input_shape):
+        assert input_shape and len(input_shape) == 2
+        return (input_shape[0], self.output_dim)
+
+    def compute_output_shape(self, input_shape):
         assert input_shape and len(input_shape) == 2
         return (input_shape[0], self.output_dim)
 
@@ -100,35 +108,59 @@ class DeepEmbeddingClustering(object):
         self.cluster_centres = cluster_centres
         self.batch_size = batch_size
 
+        self.learning_rate = 0.1
+        self.iters_lr_update = 20000
+        self.lr_change_rate = 0.1
+
+        # greedy layer-wise training before end-to-end training:
+
+        self.encoders_dims = [self.input_dim, 500, 500, 2000, 10]
+
         self.input_layer = Input(shape=(self.input_dim,), name='input')
         dropout_fraction = 0.2
-        if self.encoded is None:
-            self.encoded = Dropout(dropout_fraction, name='input_dropout')(self.input_layer)
-            self.encoded = Dense(500, activation='relu', name='encoder_dense_1')(self.encoded)
-            self.encoded = Dropout(dropout_fraction, name='encoder_dropout_1')(self.encoded)
-            self.encoded = Dense(500, activation='relu', name='encoder_dense_2')(self.encoded)
-            self.encoded = Dropout(dropout_fraction, name='encoder_dropout_2')(self.encoded)
-            self.encoded = Dense(2000, activation='relu', name='encoder_dense_3')(self.encoded)
-            self.encoded = Dropout(dropout_fraction, name='encoder_dropout_3')(self.encoded)
-            self.encoded = Dense(10, activation='linear', name='encoder_dense_4')(self.encoded)
-        self.encoder = Model(input=self.input_layer, output=self.encoded)
+        init_stddev = 0.01
 
-        if self.decoded is None:
-            self.decoded = Dense(2000, activation='relu', name='decoder_dense_1')(self.encoded)
-            self.decoded = Dropout(dropout_fraction, name='decoder_dropout_1')(self.decoded)
-            self.decoded = Dense(500, activation='relu', name='decoder_dense_2')(self.decoded)
-            self.decoded = Dropout(dropout_fraction, name='decoder_dropout_2')(self.decoded)
-            self.decoded = Dense(500, activation='relu', name='decoder_dense_3')(self.decoded)
-            self.decoded = Dropout(dropout_fraction, name='decoder_dropout_3')(self.decoded)
-            self.decoded = Dense(784, activation='linear', name='decoder_dense_4')(self.decoded)
-        self.autoencoder = Model(input=self.input_layer, output=self.decoded)
+        self.layer_wise_autoencoders = []
+        self.encoders = []
+        self.decoders = []
+        for i  in range(1, len(self.encoders_dims)):
+            
+            encoder_activation = 'linear' if i == (len(self.encoders_dims) - 1) else 'relu'
+            encoder = Dense(self.encoders_dims[i], activation=encoder_activation,
+                            input_shape=(self.encoders_dims[i-1],),
+                            kernel_initializer=RandomNormal(mean=0.0, stddev=init_stddev, seed=None),
+                            bias_initializer='zeros', name='encoder_dense_%d'%i)
+            self.encoders.append(encoder)
+
+            decoder_index = len(self.encoders_dims) - i
+            decoder_activation = 'linear' if i == 1 else 'relu'
+            decoder = Dense(self.encoders_dims[i-1], activation=decoder_activation,
+                            kernel_initializer=RandomNormal(mean=0.0, stddev=init_stddev, seed=None),
+                            bias_initializer='zeros',
+                            name='decoder_dense_%d'%decoder_index)
+            self.decoders.append(decoder)
+
+            autoencoder = Sequential([
+                Dropout(dropout_fraction, input_shape=(self.encoders_dims[i-1],), 
+                        name='encoder_dropout_%d'%i),
+                encoder,
+                Dropout(dropout_fraction, name='decoder_dropout_%d'%decoder_index),
+                decoder
+            ])
+            autoencoder.compile(loss='mse', optimizer=SGD(lr=self.learning_rate, decay=0, momentum=0.9))
+            self.layer_wise_autoencoders.append(autoencoder)
+
+        # build the end-to-end autoencoder for finetuning
+        # Note that at this point dropout is discarded
+        self.encoder = Sequential(self.encoders)
+        self.encoder.compile(loss='mse', optimizer=SGD(lr=self.learning_rate, decay=0, momentum=0.9))
+        self.decoders.reverse()
+        self.autoencoder = Sequential(self.encoders + self.decoders)
+        self.autoencoder.compile(loss='mse', optimizer=SGD(lr=self.learning_rate, decay=0, momentum=0.9))
 
         if cluster_centres is not None:
             assert cluster_centres.shape[0] == self.n_clusters
             assert cluster_centres.shape[1] == self.encoder.layers[-1].output_dim
-
-        self.encoder.compile(optimizer='adam', loss='mse')
-        self.autoencoder.compile(optimizer='adam', loss='mse')
 
         if self.pretrained_weights is not None:
             self.autoencoder.load_weights(self.pretrained_weights)
@@ -137,32 +169,71 @@ class DeepEmbeddingClustering(object):
         weight = q**2 / q.sum(0)
         return (weight.T / weight.sum(1)).T
 
-    def initialize(self, X, save_autoencoder=False, **kwargs):
+    def initialize(self, X, save_autoencoder=False, layerwise_pretrain_iters=50000, finetune_iters=100000):
         if self.pretrained_weights is None:
-            print 'Training autoencoder.'
-            self.autoencoder.fit(X, X, batch_size=self.batch_size, **kwargs)
+
+            iters_per_epoch = int(len(X) / self.batch_size)
+            layerwise_epochs = max(int(layerwise_pretrain_iters / iters_per_epoch), 1)
+            finetune_epochs = max(int(finetune_iters / iters_per_epoch), 1)
+
+            print('layerwise pretrain')
+            current_input = X
+            lr_epoch_update = max(1, self.iters_lr_update / float(iters_per_epoch))
+            
+            def step_decay(epoch):
+                initial_rate = self.learning_rate
+                factor = int(epoch / lr_epoch_update)
+                lr = initial_rate / (10 ** factor)
+                return lr
+            lr_schedule = LearningRateScheduler(step_decay)
+
+            for i, autoencoder in enumerate(self.layer_wise_autoencoders):
+                if i > 0:
+                    weights = self.encoders[i-1].get_weights()
+                    dense_layer = Dense(self.encoders_dims[i], input_shape=(current_input.shape[1],),
+                                        activation='relu', weights=weights,
+                                        name='encoder_dense_copy_%d'%i)
+                    encoder_model = Sequential([dense_layer])
+                    encoder_model.compile(loss='mse', optimizer=SGD(lr=self.learning_rate, decay=0, momentum=0.9))
+                    current_input = encoder_model.predict(current_input)
+
+                autoencoder.fit(current_input, current_input, 
+                                batch_size=self.batch_size, epochs=layerwise_epochs, callbacks=[lr_schedule])
+                self.autoencoder.layers[i].set_weights(autoencoder.layers[1].get_weights())
+                self.autoencoder.layers[len(self.autoencoder.layers) - i - 1].set_weights(autoencoder.layers[-1].get_weights())
+            
+            print('Finetuning autoencoder')
+            
+            #update encoder and decoder weights:
+            self.autoencoder.fit(X, X, batch_size=self.batch_size, epochs=finetune_epochs, callbacks=[lr_schedule])
+
             if save_autoencoder:
                 self.autoencoder.save_weights('autoencoder.h5')
         else:
-            print 'Loading pretrained weights for autoencoder.'
+            print('Loading pretrained weights for autoencoder.')
             self.autoencoder.load_weights(self.pretrained_weights)
 
         # update encoder, decoder
+        # TODO: is this needed? Might be redundant...
         for i in range(len(self.encoder.layers)):
             self.encoder.layers[i].set_weights(self.autoencoder.layers[i].get_weights())
 
         # initialize cluster centres using k-means
-        print 'Initializing cluster centres with k-means.'
+        print('Initializing cluster centres with k-means.')
         if self.cluster_centres is None:
-            kmeans = KMeans(n_clusters=self.n_clusters, n_init=50)
+            kmeans = KMeans(n_clusters=self.n_clusters, n_init=20)
             self.y_pred = kmeans.fit_predict(self.encoder.predict(X))
             self.cluster_centres = kmeans.cluster_centers_
 
         # prepare DEC model
-        self.DEC = Model(input=self.input_layer,
-                         output=ClusteringLayer(self.n_clusters,
+        #self.DEC = Model(inputs=self.input_layer,
+        #                 outputs=ClusteringLayer(self.n_clusters,
+        #                                        weights=self.cluster_centres,
+        #                                        name='clustering')(self.encoder))
+        self.DEC = Sequential([self.encoder,
+                             ClusteringLayer(self.n_clusters,
                                                 weights=self.cluster_centres,
-                                                name='clustering')(self.encoded))
+                                                name='clustering')])
         self.DEC.compile(loss='kullback_leibler_divergence', optimizer='adadelta')
         return
 
@@ -184,17 +255,16 @@ class DeepEmbeddingClustering(object):
         if update_interval is None:
             # 1 epochs
             update_interval = X.shape[0]/self.batch_size
-        print 'Update interval', update_interval
+        print('Update interval', update_interval)
 
         if save_interval is None:
             # 50 epochs
             save_interval = X.shape[0]/self.batch_size*50
-        print 'Save interval', save_interval
+        print('Save interval', save_interval)
 
         assert save_interval >= update_interval
 
         train = True
-        shuffled = np.random.shuffle(range(X.shape[0]))
         iteration, index = 0, 0
         self.accuracy = []
 
@@ -202,8 +272,8 @@ class DeepEmbeddingClustering(object):
             sys.stdout.write('\r')
             # cutoff iteration
             if iter_max < iteration:
-                print 'Reached maximum iteration limit. Stopping training.'
-                return
+                print('Reached maximum iteration limit. Stopping training.')
+                return self.y_pred
 
             # update (or initialize) probability distributions and propagate weight changes
             # from DEC model to encoder.
@@ -216,19 +286,19 @@ class DeepEmbeddingClustering(object):
                 if y is not None:
                     acc = self.cluster_acc(y, y_pred)[0]
                     self.accuracy.append(acc)
-                    print 'Iteration '+str(iteration)+', Accuracy '+str(np.round(acc, 5))
+                    print('Iteration '+str(iteration)+', Accuracy '+str(np.round(acc, 5)))
                 else:
-                    print str(np.round(delta_label*100, 5))+'% change in label assignment'
+                    print(str(np.round(delta_label*100, 5))+'% change in label assignment')
 
                 if delta_label < tol:
-                    print 'Reached tolerance threshold. Stopping training.'
+                    print('Reached tolerance threshold. Stopping training.')
                     train = False
                     continue
                 else:
                     self.y_pred = y_pred
 
                 for i in range(len(self.encoder.layers)):
-                    self.encoder.layers[i].set_weights(self.DEC.layers[i].get_weights())
+                    self.encoder.layers[i].set_weights(self.DEC.layers[0].layers[i].get_weights())
                 self.cluster_centres = self.DEC.layers[-1].get_weights()[0]
 
             # train on batch
@@ -251,7 +321,7 @@ class DeepEmbeddingClustering(object):
                 clust_2d = pca.transform(self.cluster_centres)
                 # save states for visualization
                 pickle.dump({'z_2d': z_2d, 'clust_2d': clust_2d, 'q': self.q, 'p': self.p},
-                            open('c'+str(iteration)+'.pkl', 'w'))
+                            open('c'+str(iteration)+'.pkl', 'wb'))
                 # save DEC model checkpoints
                 self.DEC.save('DEC_model_'+str(iteration)+'.h5')
 
